@@ -8,4 +8,16 @@
     <color name="primary_button_color">#2563EB</color>
     <color name="text_primary">#0F172A</color>
     <color name="text_secondary">#64748B</color>
+
+    <!-- Dialog Colors -->
+    <color name="dialog_bg">#FFFFFF</color>
+    <color name="icon_circle_bg">#F9DEDF</color>
+    <color name="exit_icon_color">#E52F35</color>
+    <color name="dialog_title">#111111</color>
+    <color name="dialog_message">#444444</color>
+    <color name="stay_btn_bg">#F5F5F5</color>
+    <color name="stay_btn_text">#202020</color>
+    <color name="exit_btn_bg">#D92F32</color>
+    <color name="exit_btn_text">#FFFFFF</color>
+    <color name="red_shadow_color">#40D92F32</color>
 </resources>

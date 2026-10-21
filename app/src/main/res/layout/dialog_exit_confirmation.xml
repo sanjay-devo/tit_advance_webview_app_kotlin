@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog"
+    android:elevation="8dp"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <!-- Small circular icon -->
+    <FrameLayout
+        android:layout_width="60dp"
+        android:layout_height="60dp"
+        android:background="@drawable/bg_exit_icon_circle">
+
+        <ImageView
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="center"
+            android:contentDescription="@null"
+            android:src="@drawable/ic_exit"
+            app:tint="@color/exit_icon_color" />
+    </FrameLayout>
+
+    <!-- Title -->
+    <TextView
+        android:id="@+id/tvDialogTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:gravity="center"
+        android:text="@string/exit_dialog_title"
+        android:textColor="@color/dialog_title"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <!-- Message -->
+    <TextView
+        android:id="@+id/tvDialogMessage"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center"
+        android:text="@string/exit_dialog_message"
+        android:textColor="@color/dialog_message"
+        android:textSize="15sp" />
+
+    <!-- Horizontally aligned buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnStay"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:stateListAnimator="@null"
+            android:text="@string/btn_stay"
+            android:textAllCaps="false"
+            android:textColor="@color/stay_btn_text"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            app:backgroundTint="@color/stay_btn_bg"
+            app:cornerRadius="12dp"
+            app:elevation="0dp"
+            app:rippleColor="#20000000"
+            app:strokeWidth="0dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnExit"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:outlineAmbientShadowColor="@color/red_shadow_color"
+            android:outlineSpotShadowColor="@color/red_shadow_color"
+            android:text="@string/btn_yes_exit"
+            android:textAllCaps="false"
+            android:textColor="@color/exit_btn_text"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            app:backgroundTint="@color/exit_btn_bg"
+            app:cornerRadius="12dp"
+            app:elevation="4dp"
+            app:rippleColor="#20FFFFFF"
+            app:strokeWidth="0dp"
+            tools:targetApi="28" />
+
+    </LinearLayout>
+
+</LinearLayout>

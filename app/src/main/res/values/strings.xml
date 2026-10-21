@@ -3,4 +3,11 @@
     <string name="error_title">Connection Error</string>
     <string name="error_message">Unable to load page. Please check your internet connection and try again.</string>
     <string name="btn_try_again">Try Again</string>
+
+    <!-- Confirmation Dialog Strings -->
+    <string name="exit_dialog_title">Exit TIT Advance?</string>
+    <string name="exit_dialog_message">Are you sure you want to close?</string>
+    <string name="btn_stay">Stay</string>
+    <string name="btn_yes_exit">Yes, Exit</string>
+    <string name="toast_double_back">Press back again to exit</string>
 </resources>

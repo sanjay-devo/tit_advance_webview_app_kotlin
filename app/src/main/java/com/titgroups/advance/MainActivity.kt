@@ -1,14 +1,19 @@
 package com.titgroups.advance
 
+import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
+import android.view.Window
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -316,11 +321,35 @@ class MainActivity : AppCompatActivity() {
                 } else if (webView.canGoBack()) {
                     webView.goBack()
                 } else {
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
+                    showExitConfirmationDialog()
                 }
             }
         })
+    }
+
+    private fun showExitConfirmationDialog() {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.setContentView(R.layout.dialog_exit_confirmation)
+
+        dialog.window?.let { window ->
+            window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            window.setDimAmount(0.36f)
+            val displayMetrics = resources.displayMetrics
+            val width = (displayMetrics.widthPixels * 0.86).toInt()
+            window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+
+        dialog.findViewById<View>(R.id.btnStay)?.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        dialog.findViewById<View>(R.id.btnExit)?.setOnClickListener {
+            dialog.dismiss()
+            finish()
+        }
+
+        dialog.show()
     }
 
     private fun loadPage(url: String) {
