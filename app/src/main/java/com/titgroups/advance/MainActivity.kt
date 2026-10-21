@@ -1,8 +1,13 @@
 package com.titgroups.advance
 
+import android.Manifest
 import android.app.Dialog
+import android.app.DownloadManager
+import android.content.ActivityNotFoundException
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -10,10 +15,17 @@ import android.graphics.drawable.ColorDrawable
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.util.Base64
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.MimeTypeMap
+import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -27,18 +39,23 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.progressindicator.LinearProgressIndicator
+import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TARGET_URL = "https://titadvance.dukans.in/"
         private const val TARGET_HOST = "titadvance.dukans.in"
+        private const val PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.titgroups.advance"
     }
 
     private lateinit var rootContainer: View
@@ -51,6 +68,10 @@ class MainActivity : AppCompatActivity() {
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var hasError = false
     private var lastFailedUrl: String? = null
+    private var pendingDownloadUrl: String? = null
+    private var pendingUserAgent: String? = null
+    private var pendingContentDisposition: String? = null
+    private var pendingMimeType: String? = null
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -75,6 +96,71 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val writeGranted = permissions[Manifest.permission.WRITE_EXTERNAL_STORAGE] ?: true
+        if (writeGranted) {
+            pendingDownloadUrl?.let { url ->
+                startDownload(url, pendingUserAgent, pendingContentDisposition, pendingMimeType)
+            }
+        } else {
+            Toast.makeText(this, "Storage permission required to download files", Toast.LENGTH_SHORT).show()
+        }
+        pendingDownloadUrl = null
+        pendingUserAgent = null
+        pendingContentDisposition = null
+        pendingMimeType = null
+    }
+
+    private val downloadReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == DownloadManager.ACTION_DOWNLOAD_COMPLETE) {
+                val downloadId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                if (downloadId != -1L) {
+                    queryAndOpenDownloadedFile(downloadId)
+                }
+            }
+        }
+    }
+
+    inner class WebAppInterface {
+        @JavascriptInterface
+        fun shareText(text: String?) {
+            runOnUiThread {
+                val validText = if (text.isNullOrBlank()) PLAY_STORE_URL else text
+                this@MainActivity.shareText(validText)
+            }
+        }
+
+        @JavascriptInterface
+        fun shareApp() {
+            runOnUiThread {
+                this@MainActivity.shareApp()
+            }
+        }
+
+        @JavascriptInterface
+        fun share(title: String?, text: String?, url: String?) {
+            runOnUiThread {
+                val sb = StringBuilder()
+                if (!title.isNullOrBlank()) sb.append(title).append("\n")
+                if (!text.isNullOrBlank()) sb.append(text).append("\n")
+                if (!url.isNullOrBlank()) sb.append(url)
+                val fullText = sb.toString().trim()
+                val finalText = if (fullText.isEmpty()) PLAY_STORE_URL else fullText
+                this@MainActivity.shareText(finalText)
+            }
+        }
+
+        @JavascriptInterface
+        fun processBase64Data(base64Data: String, fileName: String, mimeType: String) {
+            runOnUiThread {
+                this@MainActivity.saveAndOpenBase64File(base64Data, fileName, mimeType)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -92,11 +178,31 @@ class MainActivity : AppCompatActivity() {
         setupSwipeRefresh()
         setupRetryButton()
         setupBackNavigation()
+        registerDownloadReceiver()
+        requestNotificationPermissionIfNeeded()
 
         if (savedInstanceState == null) {
             loadPage(TARGET_URL)
         } else {
             webView.restoreState(savedInstanceState)
+        }
+    }
+
+    private fun registerDownloadReceiver() {
+        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        ContextCompat.registerReceiver(
+            this,
+            downloadReceiver,
+            filter,
+            ContextCompat.RECEIVER_EXPORTED
+        )
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+            }
         }
     }
 
@@ -136,9 +242,19 @@ class MainActivity : AppCompatActivity() {
             cacheMode = WebSettings.LOAD_DEFAULT
         }
 
+        val webAppInterface = WebAppInterface()
+        webView.addJavascriptInterface(webAppInterface, "AndroidApp")
+        webView.addJavascriptInterface(webAppInterface, "Android")
+        webView.addJavascriptInterface(webAppInterface, "AndroidShare")
+
+        webView.setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
+            checkAndDownloadFile(url, userAgent, contentDisposition, mimetype)
+        }
+
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 super.onProgressChanged(view, newProgress)
+                injectWebSharePolyfill()
                 if (newProgress < 100) {
                     progressBar.visibility = View.VISIBLE
                     progressBar.progress = newProgress
@@ -183,6 +299,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                injectWebSharePolyfill()
                 if (url != null && !url.startsWith("data:")) {
                     hasError = false
                 }
@@ -192,6 +309,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                injectWebSharePolyfill()
                 progressBar.visibility = View.GONE
                 swipeRefreshLayout.isRefreshing = false
                 if (hasError) {
@@ -216,11 +334,80 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun injectWebSharePolyfill() {
+        val js = """
+            (function() {
+                function doShare(data) {
+                    return new Promise(function(resolve, reject) {
+                        try {
+                            var title = (data && data.title) ? data.title : "";
+                            var text = (data && data.text) ? data.text : "";
+                            var url = (data && data.url) ? data.url : "";
+                            
+                            var shareString = "";
+                            if (title) shareString += title;
+                            if (text) {
+                                if (shareString) shareString += "\n";
+                                shareString += text;
+                            }
+                            if (url) {
+                                if (shareString) shareString += "\n";
+                                shareString += url;
+                            }
+                            if (!shareString) {
+                                shareString = "$PLAY_STORE_URL";
+                            }
+                            
+                            if (window.AndroidApp && window.AndroidApp.shareText) {
+                                window.AndroidApp.shareText(shareString);
+                                resolve();
+                            } else if (window.Android && window.Android.shareText) {
+                                window.Android.shareText(shareString);
+                                resolve();
+                            } else if (window.AndroidShare && window.AndroidShare.shareText) {
+                                window.AndroidShare.shareText(shareString);
+                                resolve();
+                            } else {
+                                resolve();
+                            }
+                        } catch (e) {
+                            resolve();
+                        }
+                    });
+                }
+
+                navigator.share = doShare;
+                navigator.canShare = function(data) { return true; };
+                if (window.navigator) {
+                    window.navigator.share = doShare;
+                    window.navigator.canShare = function(data) { return true; };
+                }
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js, null)
+    }
+
     private fun processUrlLoading(url: String): Boolean {
+        val lowerUrl = url.lowercase()
+        if (lowerUrl.contains("share-app") || lowerUrl.contains("action=share") || lowerUrl.contains("type=share")) {
+            shareApp()
+            return true
+        }
+        if (isDownloadableUrl(url)) {
+            checkAndDownloadFile(url, webView.settings.userAgentString, null, getMimeType(url))
+            return true
+        }
         if (isInternalUrl(url)) {
             return false
         }
         return handleExternalUrl(url)
+    }
+
+    private fun isDownloadableUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.endsWith(".pdf") || lower.contains(".pdf?") ||
+                lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
+                lower.endsWith(".docx") || lower.endsWith(".xlsx") || lower.endsWith(".zip")
     }
 
     private fun isInternalUrl(url: String): Boolean {
@@ -271,6 +458,15 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
             "http", "https" -> {
+                if (url.contains("whatsapp.com") || url.contains("wa.me")) {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, uri)
+                        startActivity(intent)
+                        return true
+                    } catch (e: Exception) {
+                        // Fallback below
+                    }
+                }
                 if (!isInternalUrl(url)) {
                     try {
                         val intent = Intent(Intent.ACTION_VIEW, uri)
@@ -292,6 +488,209 @@ class MainActivity : AppCompatActivity() {
             }
         }
         return false
+    }
+
+    private fun checkAndDownloadFile(
+        url: String,
+        userAgent: String?,
+        contentDisposition: String?,
+        mimeType: String?
+    ) {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                pendingDownloadUrl = url
+                pendingUserAgent = userAgent
+                pendingContentDisposition = contentDisposition
+                pendingMimeType = mimeType
+                permissionLauncher.launch(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE))
+                return
+            }
+        }
+        startDownload(url, userAgent, contentDisposition, mimeType)
+    }
+
+    private fun startDownload(
+        url: String,
+        userAgent: String?,
+        contentDisposition: String?,
+        mimeType: String?
+    ) {
+        val effectiveMimeType = if (mimeType.isNullOrEmpty() || mimeType == "application/octet-stream") {
+            getMimeType(url)
+        } else {
+            mimeType
+        }
+        val guessedFileName = URLUtil.guessFileName(url, contentDisposition, effectiveMimeType)
+
+        if (url.startsWith("data:")) {
+            saveAndOpenBase64File(url, guessedFileName, effectiveMimeType)
+            return
+        }
+
+        if (url.startsWith("blob:")) {
+            downloadBlobUrl(url, guessedFileName, effectiveMimeType)
+            return
+        }
+
+        try {
+            val request = DownloadManager.Request(Uri.parse(url)).apply {
+                setMimeType(effectiveMimeType)
+                val cookie = CookieManager.getInstance().getCookie(url)
+                if (!cookie.isNullOrEmpty()) {
+                    addRequestHeader("Cookie", cookie)
+                }
+                if (!userAgent.isNullOrEmpty()) {
+                    addRequestHeader("User-Agent", userAgent)
+                }
+                setDescription("Downloading file...")
+                setTitle(guessedFileName)
+                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, guessedFileName)
+                setAllowedOverMetered(true)
+                setAllowedOverRoaming(true)
+            }
+
+            val downloadManager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            downloadManager.enqueue(request)
+            Toast.makeText(this, "Downloading $guessedFileName...", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun downloadBlobUrl(blobUrl: String, fileName: String, mimeType: String) {
+        val js = """
+            (function() {
+                var xhr = new XMLHttpRequest();
+                xhr.open('GET', '$blobUrl', true);
+                xhr.responseType = 'blob';
+                xhr.onload = function() {
+                    var reader = new FileReader();
+                    reader.readAsDataURL(xhr.response);
+                    reader.onloadend = function() {
+                        AndroidApp.processBase64Data(reader.result, '$fileName', '$mimeType');
+                    };
+                };
+                xhr.onerror = function() {
+                    console.error('Blob download failed');
+                };
+                xhr.send();
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js, null)
+    }
+
+    private fun saveAndOpenBase64File(base64Data: String, fileName: String, mimeType: String) {
+        try {
+            val cleanBase64 = if (base64Data.contains(",")) {
+                base64Data.substring(base64Data.indexOf(",") + 1)
+            } else {
+                base64Data
+            }
+            val bytes = Base64.decode(cleanBase64, Base64.DEFAULT)
+
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (!downloadsDir.exists()) downloadsDir.mkdirs()
+
+            val targetFile = File(downloadsDir, fileName)
+            FileOutputStream(targetFile).use { it.write(bytes) }
+
+            Toast.makeText(this, "File saved: $fileName", Toast.LENGTH_SHORT).show()
+
+            val contentUri = FileProvider.getUriForFile(this, "$packageName.fileprovider", targetFile)
+            val finalMimeType = mimeType.ifEmpty { getMimeType(fileName) }
+            openDownloadedFile(contentUri, finalMimeType)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Failed to save file: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun queryAndOpenDownloadedFile(downloadId: Long) {
+        try {
+            val downloadManager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val query = DownloadManager.Query().setFilterById(downloadId)
+            val cursor = downloadManager.query(query)
+            if (cursor != null && cursor.moveToFirst()) {
+                val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                if (statusIndex != -1 && cursor.getInt(statusIndex) == DownloadManager.STATUS_SUCCESSFUL) {
+                    val uriIndex = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+                    val mimeTypeIndex = cursor.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
+                    val titleIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TITLE)
+
+                    val uriString = if (uriIndex != -1) cursor.getString(uriIndex) else null
+                    val mimeType = if (mimeTypeIndex != -1) cursor.getString(mimeTypeIndex) else null
+                    val fileName = if (titleIndex != -1) cursor.getString(titleIndex) else "downloaded_file"
+
+                    Toast.makeText(this, "Download complete: $fileName", Toast.LENGTH_LONG).show()
+
+                    if (!uriString.isNullOrEmpty()) {
+                        val fileUri = Uri.parse(uriString)
+                        val contentUri = if (fileUri.scheme == "file") {
+                            val file = File(fileUri.path ?: "")
+                            if (file.exists()) {
+                                FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+                            } else fileUri
+                        } else fileUri
+
+                        val finalMimeType = mimeType ?: getMimeType(fileName)
+                        openDownloadedFile(contentUri, finalMimeType)
+                    }
+                }
+                cursor.close()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun openDownloadedFile(uri: Uri, mimeType: String) {
+        try {
+            val openIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mimeType)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(Intent.createChooser(openIntent, "Open file with"))
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "No app found to open this file", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Unable to open file", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun shareText(text: String, title: String = "Share via") {
+        try {
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, text)
+            }
+            startActivity(Intent.createChooser(shareIntent, title))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Unable to share content", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun shareApp() {
+        val shareMessage = "Check out TIT Advance app: $PLAY_STORE_URL"
+        shareText(shareMessage, "Share TIT Advance")
+    }
+
+    private fun getMimeType(url: String): String {
+        val extension = MimeTypeMap.getFileExtensionFromUrl(url)
+        if (!extension.isNullOrEmpty()) {
+            val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.lowercase())
+            if (!mime.isNullOrEmpty()) return mime
+        }
+        val lowerUrl = url.lowercase()
+        return when {
+            lowerUrl.contains(".pdf") -> "application/pdf"
+            lowerUrl.contains(".png") -> "image/png"
+            lowerUrl.contains(".jpg") || lowerUrl.contains(".jpeg") -> "image/jpeg"
+            lowerUrl.contains(".zip") -> "application/zip"
+            lowerUrl.contains(".docx") -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            lowerUrl.contains(".xlsx") -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            else -> "*/*"
+        }
     }
 
     private fun setupSwipeRefresh() {
@@ -399,6 +798,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        try {
+            unregisterReceiver(downloadReceiver)
+        } catch (e: Exception) {
+            // Receiver might not be registered
+        }
         webView.destroy()
         super.onDestroy()
     }
