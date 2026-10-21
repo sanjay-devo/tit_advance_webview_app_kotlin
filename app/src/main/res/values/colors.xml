@@ -2,4 +2,10 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <color name="status_bar_color">#F9FAFC</color>
+    <color name="window_background">#F9FAFC</color>
+    <color name="primary_color">#0F172A</color>
+    <color name="primary_button_color">#2563EB</color>
+    <color name="text_primary">#0F172A</color>
+    <color name="text_secondary">#64748B</color>
 </resources>
